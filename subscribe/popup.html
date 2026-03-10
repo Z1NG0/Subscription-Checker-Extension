@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS-SUB</title>
+  <style>
+    :root {
+      --bg: #13161c;
+      --panel: #1a1f28;
+      --text: #eaf1ff;
+      --muted: #9aa7c0;
+      --accent: #5ff28d;
+      --accent-off: #42506a;
+      --border: rgba(255, 255, 255, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 340px;
+      font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top right, #1f2838, var(--bg) 55%);
+    }
+
+    .wrap {
+      padding: 14px;
+    }
+
+    .title {
+      margin: 0 0 4px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .subtitle {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .row:last-child {
+      border-bottom: 0;
+    }
+
+    .label {
+      display: block;
+      max-width: 240px;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .hint {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      flex: 0 0 auto;
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      background: var(--accent-off);
+      cursor: pointer;
+      transition: background .16s ease;
+    }
+
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .16s ease;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+    }
+
+    .toggle:checked {
+      background: var(--accent);
+    }
+
+    .toggle:checked::after {
+      transform: translateX(18px);
+    }
+
+    .status {
+      margin-top: 10px;
+      min-height: 16px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1 class="title">CS-SUB</h1>
+    <p class="subtitle">Настройки расширения</p>
+
+    <section class="card">
+      <label class="row">
+        <span class="label">Показывать меню [CS-SUB]</span>
+        <input id="showPanel" class="toggle" type="checkbox">
+      </label>
+
+      <label class="row">
+        <span class="label">
+          Визуальная проверка
+          <span class="hint">Если выключено, статус показывается сразу без всплывающей подсветки.</span>
+        </span>
+        <input id="visualCheck" class="toggle" type="checkbox">
+      </label>
+
+      <label class="row">
+        <span class="label">
+          Автопроверка друзей
+          <span class="hint">Проверка запускается при входе на страницу друзей.</span>
+        </span>
+        <input id="autoCheckFriends" class="toggle" type="checkbox">
+      </label>
+    </section>
+
+    <div id="status" class="status"></div>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -2,12 +2,22 @@
 
   const PANEL_ID = "cs-sub-panel";
   const BTN_ID = "cs-sub-check-btn";
+  const SETTINGS_KEY = "csSubSettings";
+  const FRIEND_BLOCK_SELECTOR = "#block-profile-friends-in-game .block-profile-friends-f-block, #block-profile-friends-online .block-profile-friends-f-block, #block-profile-friends-offline .block-profile-friends-f-block";
+  const DEFAULT_SETTINGS = Object.freeze({
+    showPanel: true,
+    visualCheck: true,
+    autoCheckFriends: false
+  });
 
   let isRunning = false;
   let cancelRequested = false;
   let stats = { premium: 0, lite: 0, none: 0 };
   let runAbortController = null;
   let apiLimiter = null;
+  let settings = { ...DEFAULT_SETTINGS };
+  let autoCheckTimer = null;
+  let lastAutoCheckRoute = "";
 
   const LOG_LEVEL = 1;
   const LOG_PREFIX = "[CS-SUB]";
@@ -23,6 +33,64 @@
     const clean = String(text).replace(/\s+/g, ' ').trim();
     if (clean.length > maxLen) return clean.slice(0, maxLen) + "...";
     return clean;
+  }
+
+  function normalizeSettings(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      showPanel: source.showPanel !== false,
+      visualCheck: source.visualCheck !== false,
+      autoCheckFriends: source.autoCheckFriends === true
+    };
+  }
+
+  function getStorageArea() {
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+        return chrome.storage.local;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function loadSettings() {
+    const storage = getStorageArea();
+    if (!storage) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      try {
+        storage.get([SETTINGS_KEY], (result) => {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            log("warn", `Ошибка чтения настроек: ${chrome.runtime.lastError.message}`);
+            resolve();
+            return;
+          }
+          settings = normalizeSettings(result ? result[SETTINGS_KEY] : null);
+          resolve();
+        });
+      } catch (e) {
+        log("warn", `Ошибка загрузки настроек: ${String(e)}`);
+        resolve();
+      }
+    });
+  }
+
+  function setupSettingsListener() {
+    if (window.__csSubSettingsListenerReady) return;
+    window.__csSubSettingsListenerReady = true;
+
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes || !changes[SETTINGS_KEY]) return;
+          settings = normalizeSettings(changes[SETTINGS_KEY].newValue);
+          if (!settings.autoCheckFriends) lastAutoCheckRoute = "";
+          ensureUiForCurrentRoute();
+        });
+      }
+    } catch (e) {
+      log("warn", `Не удалось подписаться на изменения настроек: ${String(e)}`);
+    }
   }
 
   function sleep(ms, signal) {
@@ -277,6 +345,38 @@
     }
   }
 
+  function getCurrentRouteKey() {
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  }
+
+  function clearAutoCheckTimer() {
+    if (!autoCheckTimer) return;
+    clearTimeout(autoCheckTimer);
+    autoCheckTimer = null;
+  }
+
+  function scheduleAutoCheck(delayMs = 300) {
+    if (!settings.autoCheckFriends || !isFriendsPageUrl()) return;
+
+    clearAutoCheckTimer();
+    autoCheckTimer = setTimeout(async () => {
+      autoCheckTimer = null;
+
+      if (!settings.autoCheckFriends || !isFriendsPageUrl() || isRunning) return;
+      const routeKey = getCurrentRouteKey();
+      if (routeKey === lastAutoCheckRoute) return;
+
+      const firstFriend = document.querySelector(FRIEND_BLOCK_SELECTOR);
+      if (!firstFriend) {
+        scheduleAutoCheck(450);
+        return;
+      }
+
+      lastAutoCheckRoute = routeKey;
+      await checkAllFriends(null);
+    }, Math.max(0, delayMs));
+  }
+
   function removeUi() {
     const panel = document.getElementById(PANEL_ID);
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
@@ -291,15 +391,25 @@
     injectStyles();
 
     if (isFriendsPageUrl()) {
-      const hasButton = createHeaderButtons();
-      if (!hasButton) {
+      const hasUiAnchor = createHeaderButtons();
+      if (!hasUiAnchor) {
         removeUi();
         return;
       }
       createPanel();
-      buttonsCreated = true;
+      buttonsCreated = !!document.getElementById(BTN_ID);
+
+      if (settings.autoCheckFriends) {
+        scheduleAutoCheck(250);
+      } else {
+        clearAutoCheckTimer();
+        lastAutoCheckRoute = "";
+      }
       return;
     }
+
+    clearAutoCheckTimer();
+    lastAutoCheckRoute = "";
 
     if (isRunning) {
       cancelRequested = true;
@@ -314,6 +424,9 @@
   function setupFriendsPageUiGuard() {
     if (window.__csSubUiGuardReady) return;
     window.__csSubUiGuardReady = true;
+
+    let lastObservedRouteKey = getCurrentRouteKey();
+    let lastObservedFriendsPage = isFriendsPageUrl();
 
     let uiSyncTimer = null;
     const scheduleSync = (delayMs = 40) => {
@@ -341,11 +454,30 @@
     window.addEventListener('hashchange', () => scheduleSync(0), true);
 
     const observer = new MutationObserver(() => {
+      const currentRouteKey = getCurrentRouteKey();
       const onFriends = isFriendsPageUrl();
+      const routeChanged =
+        currentRouteKey !== lastObservedRouteKey || onFriends !== lastObservedFriendsPage;
+
+      if (routeChanged) {
+        lastObservedRouteKey = currentRouteKey;
+        lastObservedFriendsPage = onFriends;
+        scheduleSync(0);
+        return;
+      }
+
       const hasBtn = !!document.getElementById(BTN_ID);
       const hasPanel = !!document.getElementById(PANEL_ID);
-      if (onFriends && (!hasBtn || !hasPanel)) scheduleSync(40);
-      if (!onFriends && (hasBtn || hasPanel)) scheduleSync(40);
+      const shouldHaveBtn = onFriends && !settings.autoCheckFriends;
+      const shouldHavePanel = onFriends && settings.showPanel;
+      const routeChangedForAutoCheck =
+        onFriends &&
+        settings.autoCheckFriends &&
+        getCurrentRouteKey() !== lastAutoCheckRoute;
+
+      if (hasBtn !== shouldHaveBtn || hasPanel !== shouldHavePanel || routeChangedForAutoCheck) {
+        scheduleSync(40);
+      }
     });
     observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
   }
@@ -403,7 +535,13 @@
     document.head.appendChild(style);
   }
   function createPanel() {
-    if (document.getElementById(PANEL_ID)) return;
+    const existingPanel = document.getElementById(PANEL_ID);
+    if (!settings.showPanel) {
+      if (existingPanel && existingPanel.parentNode) existingPanel.parentNode.removeChild(existingPanel);
+      return;
+    }
+
+    if (existingPanel) return;
 
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
@@ -449,6 +587,7 @@
     } catch (e) { }
   }
   function panelLog(text, stats, totalTimeMs) {
+    if (!settings.showPanel) return;
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
 
@@ -474,6 +613,13 @@
       document.querySelector("header #socials");
     const header = authHeader || guestWrapper || guestNav || fallbackHeader;
     const existingBtn = document.getElementById(BTN_ID);
+
+    if (settings.autoCheckFriends) {
+      if (existingBtn && existingBtn.parentNode) existingBtn.parentNode.removeChild(existingBtn);
+      buttonsCreated = false;
+      return true;
+    }
+
     if (existingBtn) return true;
     if (!header) return false;
     if (!document.getElementById(BTN_ID)) {
@@ -706,6 +852,21 @@
     }, remaining);
   }
 
+  function clearCheckingState(block) {
+    if (!block) return;
+    try {
+      if (block._cs_fade_timeout) clearTimeout(block._cs_fade_timeout);
+      if (block._cs_fade_timeout2) clearTimeout(block._cs_fade_timeout2);
+    } catch (e) {}
+
+    try { block.removeAttribute('data-cs-checking'); } catch (e) {}
+    block.classList.remove('cs-sub-fading');
+    try { delete block._cs_check_start; } catch (e) {}
+    try { delete block._cs_pending_result; } catch (e) {}
+    block._cs_fade_timeout = null;
+    block._cs_fade_timeout2 = null;
+  }
+
   function getBlockProfileUrl(block) {
     if (!block) return null;
     if (block.tagName === "A" && block.href) return block.href;
@@ -738,9 +899,9 @@
     };
   }
 
-  function findStatusForBlock(block, index) {
+  function findStatusForKeys(keys, index) {
     if (!index) return "NONE";
-    const keys = getLookupKeysForBlock(block);
+    if (!keys) return "NONE";
 
     for (const steamid64 of keys.steamIds) {
       const bySteam = index.bySteamId.get(steamid64);
@@ -757,10 +918,10 @@
 
   async function checkAllFriends(btn) {
     if (!buttonsCreated) {
-      const hasButton = createHeaderButtons();
-      if (!hasButton) return;
+      const hasUiAnchor = createHeaderButtons();
+      if (!hasUiAnchor) return;
       createPanel();
-      buttonsCreated = true;
+      buttonsCreated = !!document.getElementById(BTN_ID);
     }
 
     if (isRunning) return;
@@ -788,9 +949,7 @@
     const startTime = Date.now();
 
     try {
-      const blocks = Array.from(document.querySelectorAll(
-        `#block-profile-friends-in-game .block-profile-friends-f-block, #block-profile-friends-online .block-profile-friends-f-block, #block-profile-friends-offline .block-profile-friends-f-block`
-      ));
+      const blocks = Array.from(document.querySelectorAll(FRIEND_BLOCK_SELECTOR));
       if (!blocks.length) {
         panelLog("Друзей не найдено", stats);
         return;
@@ -813,15 +972,25 @@
 
       let processed = 0;
       const counted = new Set();
+      const fastRender = !settings.visualCheck;
+      const panelUpdateStep = fastRender ? 20 : 1;
+      const yieldStep = fastRender ? 120 : 1;
 
       for (const block of blocks) {
         if (cancelRequested) break;
-        markChecking(block);
-
-        const result = findStatusForBlock(block, index);
-        unmarkChecking(block, result);
-
         const keys = getLookupKeysForBlock(block);
+
+        let result = "NONE";
+        if (settings.visualCheck) {
+          markChecking(block);
+          result = findStatusForKeys(keys, index);
+          unmarkChecking(block, result);
+        } else {
+          clearCheckingState(block);
+          result = findStatusForKeys(keys, index);
+          highlightProfile(block, result);
+        }
+
         const uniqueKey = keys.steamIds[0]
           ? `s:${keys.steamIds[0]}`
           : (keys.names[0] ? `n:${keys.names[0]}` : `b:${processed}`);
@@ -831,8 +1000,12 @@
         }
 
         processed += 1;
-        panelLog(`(${processed}/${blocks.length}) -> ${result}`, stats, Date.now() - startTime);
-        await safeSleep(0);
+        if (processed === blocks.length || processed % panelUpdateStep === 0) {
+          panelLog(`(${processed}/${blocks.length}) -> ${result}`, stats, Date.now() - startTime);
+        }
+        if (processed % yieldStep === 0) {
+          await safeSleep(0);
+        }
       }
 
       if (cancelRequested) {
@@ -852,9 +1025,14 @@
       isRunning = false;
     }
   }
+
   setupFriendsPageUiGuard();
-  setTimeout(() => {
+  setupSettingsListener();
+  loadSettings().finally(() => {
     ensureUiForCurrentRoute();
-  }, 500);
+    setTimeout(() => {
+      ensureUiForCurrentRoute();
+    }, 500);
+  });
 
 })();
