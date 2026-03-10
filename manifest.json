@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Subscription Checker Extension",
+  "version": "1.0.4",
+  "description": "Checks Cybershoke subscription status via API.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.cybershoke.net/*",
+    "https://cybershoke.net/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://cybershoke.net/*"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "Subscription Checker",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
