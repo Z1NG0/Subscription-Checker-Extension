@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Subscription Checker Extension",
   "version": "1.0.4",
-  "description": "Checks Cybershoke subscription status via API.",
+  "description": "Checks subscription status via API.",
   "permissions": [
     "storage"
   ],

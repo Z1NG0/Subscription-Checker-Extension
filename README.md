@@ -37,7 +37,3 @@
 - `popup.html` — интерфейс настроек
 - `popup.js` — сохранение/загрузка настроек (`chrome.storage.local`)
 - `icons/` — иконки расширения
-
-## Примечания
-- Для работы нужны разрешения из `manifest.json`: `storage`, доступ к `cybershoke.net` и `api.cybershoke.net`
-- API может отвечать `429 Too Many Requests`; в расширении есть повторные попытки и ограничение частоты запросов
